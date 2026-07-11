@@ -45,15 +45,13 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BINUTILS_VERSION: "2.42"
+          GCC_VERSION: "14.2.0"
         run: |
           # Delete any existing 'latest' release to replace it
           gh release delete latest --yes 2>/dev/null || true
           gh release create latest \
             --title "BoredOS Toolchain (x86_64-boredos)" \
-            --notes "Pre-built x86_64-boredos cross-compiler (binutils ${{ env.BINUTILS_VERSION }}, GCC ${{ env.GCC_VERSION }})." \
+            --notes "Pre-built x86_64-boredos cross-compiler (binutils ${BINUTILS_VERSION}, GCC ${GCC_VERSION})." \
             --latest \
             boredos-toolchain.tar.xz
-        env:
-          BINUTILS_VERSION: "2.42"
-          GCC_VERSION: "14.2.0"
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
