@@ -48,6 +48,10 @@ log "Extracting binutils..."
 tar -xf "${BINUTILS_TAR}"
 rm -f "${BINUTILS_TAR}"                  
 
+log "Patching config.sub to recognise boredos..."
+find "binutils-${BINUTILS_VERSION}" -name 'config.sub' -exec \
+    sed -i 's/| linux\*)/| boredos* | linux*)/' {} +
+
 log "Configuring binutils..."
 mkdir -p build-binutils
 (cd build-binutils && \
@@ -75,7 +79,11 @@ curl -fsSL --retry 3 "${GCC_URL}" -o "${GCC_TAR}"
 
 log "Extracting gcc..."
 tar -xf "${GCC_TAR}"
-rm -f "${GCC_TAR}"                       
+rm -f "${GCC_TAR}"                       # free tarball immediately
+
+log "Patching config.sub to recognise boredos..."
+find "gcc-${GCC_VERSION}" -name 'config.sub' -exec \
+    sed -i 's/| linux\*)/| boredos* | linux*)/' {} +
 
 log "Configuring gcc..."
 mkdir -p build-gcc
