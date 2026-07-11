@@ -65,7 +65,7 @@ jobs:
         with:
           usesh: true
           prepare: |
-            pkg install -y gmp mpfr libmpc texinfo curl gmake xz
+            pkg install -y gmp mpfr mpc texinfo curl gmake
           run: |
             chmod +x build.sh
             ./build.sh "${{ github.workspace }}/boredos-toolchain"

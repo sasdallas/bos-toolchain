@@ -37,11 +37,16 @@ export PATH="${PREFIX}/bin:${PATH}"
 
 # ── Detect host GMP/MPFR/MPC ────────────────────────────────────────────────
 EXTRA_CONFIGURE=""
-if pkg-config --exists gmp mpfr mpc 2>/dev/null; then
+if command -v brew &>/dev/null; then
+    # macOS: use brew --prefix to get the correct path on both Intel and arm64
+    BREW_PREFIX=$(brew --prefix)
+    log "Using Homebrew GMP/MPFR/MPC at ${BREW_PREFIX}"
+    EXTRA_CONFIGURE="--with-gmp=${BREW_PREFIX} --with-mpfr=${BREW_PREFIX} --with-mpc=${BREW_PREFIX}"
+    # GCC configure needs headers on CPPFLAGS and libs on LDFLAGS
+    export CPPFLAGS="-I${BREW_PREFIX}/include"
+    export LDFLAGS="-L${BREW_PREFIX}/lib"
+elif pkg-config --exists gmp mpfr mpc 2>/dev/null; then
     log "Using system GMP/MPFR/MPC via pkg-config"
-elif [[ -d /opt/homebrew/lib ]]; then
-    log "Using Homebrew GMP/MPFR/MPC"
-    EXTRA_CONFIGURE="--with-gmp=/opt/homebrew --with-mpfr=/opt/homebrew --with-mpc=/opt/homebrew"
 elif [[ -d /usr/local/lib ]]; then
     log "Using /usr/local GMP/MPFR/MPC"
     EXTRA_CONFIGURE="--with-gmp=/usr/local --with-mpfr=/usr/local --with-mpc=/usr/local"
