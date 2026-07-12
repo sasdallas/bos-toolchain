@@ -115,12 +115,17 @@ patch_gcc() {
     python3 -c '
 import sys
 
+def replace_or_die(filename, search, replace):
+    with open(filename, "r") as f:
+        content = f.read()
+    if search not in content:
+        print(f"ERROR: Substring not found in {filename}:", repr(search), file=sys.stderr)
+        sys.exit(1)
+    with open(filename, "w") as f:
+        f.write(content.replace(search, replace))
+
 # patch config.sub
-with open("gcc-14.2.0/config.sub", "r") as f:
-    content = f.read()
-content = content.replace("| mlibc* |", "| mlibc* | boredos* |")
-with open("gcc-14.2.0/config.sub", "w") as f:
-    f.write(content)
+replace_or_die("gcc-14.2.0/config.sub", "| fiwix* )", "| fiwix* | boredos* )")
 
 # patch gcc/config.gcc (common parts)
 with open("gcc-14.2.0/gcc/config.gcc", "r") as f:
@@ -143,7 +148,11 @@ case ${target} in
 if common_search in content:
     content = content.replace(common_search, common_replace)
 else:
-    content = content.replace("case ${target} in\n*-*-linux*", "case ${target} in\n*-*-boredos*)\n  gas=yes\n  gnu_ld=yes\n  default_use_cxa_atexit=yes\n  use_gcc_stdint=wrap\n  ;;\n*-*-linux*")
+    search_fallback = "case ${target} in\n*-*-linux*"
+    if search_fallback not in content:
+         print("ERROR: Could not find target case block in config.gcc", file=sys.stderr)
+         sys.exit(1)
+    content = content.replace(search_fallback, "case ${target} in\n*-*-boredos*)\n  gas=yes\n  gnu_ld=yes\n  default_use_cxa_atexit=yes\n  use_gcc_stdint=wrap\n  ;;\n*-*-linux*")
 
 # patch gcc/config.gcc (x86_64-*-elf* target)
 target_block = """x86_64-*-elf*)
@@ -170,11 +179,9 @@ with open("gcc-14.2.0/gcc/config.gcc", "w") as f:
     f.write(content)
 
 # patch libstdc++-v3/configure.host
-with open("gcc-14.2.0/libstdc++-v3/configure.host", "r") as f:
-    content = f.read()
-content = content.replace("\ncase \"${host_os}\" in", "\ncase \"${host_os}\" in\n  boredos*)\n    os_include_dir=\"os/generic\"\n    ;;")
-with open("gcc-14.2.0/libstdc++-v3/configure.host", "w") as f:
-    f.write(content)
+replace_or_die("gcc-14.2.0/libstdc++-v3/configure.host",
+               "\ncase \"${host_os}\" in",
+               "\ncase \"${host_os}\" in\n  boredos*)\n    os_include_dir=\"os/generic\"\n    ;;")
 '
 }
 
