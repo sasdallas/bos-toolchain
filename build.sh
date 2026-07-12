@@ -11,7 +11,7 @@ TARGET_BUILD="x86_64-boredos"
 TARGET_NAME="x86_64-boredos"
 
 PREFIX="${1:-/opt/boredos-toolchain}"
-JOBS=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
+JOBS=1
 
 BINUTILS_TAR="binutils-${BINUTILS_VERSION}.tar.xz"
 GCC_TAR="gcc-${GCC_VERSION}.tar.xz"
@@ -85,6 +85,7 @@ patch_binutils() {
 patch_gcc() {
     log "Patching gcc..."
     patch -d "gcc-${GCC_VERSION}" -p1 < "${SCRIPT_DIR}/patches/gcc-${GCC_VERSION}.patch"
+    patch -d "gcc-${GCC_VERSION}" -p1 < "${SCRIPT_DIR}/patches/gcc-16.patch"
     log "Regenerating libstdc++ configure script..."
     (cd "gcc-${GCC_VERSION}/libstdc++-v3" && autoconf)
 }
@@ -132,6 +133,7 @@ mkdir -p build-binutils
         --disable-werror \
         --disable-multilib \
         --with-system-zlib \
+	--disable-bootstrap \
         ${EXTRA_CONFIGURE})
 
 log "Building binutils (${JOBS} jobs)..."
