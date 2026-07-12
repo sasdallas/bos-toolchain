@@ -1,0 +1,136 @@
+--- a/config.sub
++++ b/config.sub
+@@ -1749,7 +1749,7 @@
+ 	     | onefs* | tirtos* | phoenix* | fuchsia* | redox* | bme* \
+ 	     | midnightbsd* | amdhsa* | unleashed* | emscripten* | wasi* \
+ 	     | nsk* | powerunix* | genode* | zvmoe* | qnx* | emx* | zephyr* \
+-	     | fiwix* )
++	     | fiwix* | boredos* )
+ 		;;
+ 	# This one is extra strict with allowed versions
+ 	sco3.2v2 | sco3.2v[4-9]* | sco5v6*)
+--- a/gcc/config.gcc
++++ b/gcc/config.gcc
+@@ -214,6 +214,11 @@
+ out_file=
+ common_out_file=
+ tmake_file=
++case ${target} in
++*-*-boredos*)
++  tm_file="${tm_file} boredos.h"
++  ;;
++esac
+ extra_headers=
+ user_headers_inc_next_pre=
+ user_headers_inc_next_post=
+@@ -883,6 +888,13 @@
+   tmake_file="t-fuchsia"
+   rust_target_objs="${rust_target_objs} fuchsia-rust.o"
+   target_has_targetrustm=yes
++  ;;
++*-*-boredos*)
++  gas=yes
++  gnu_ld=yes
++  default_use_cxa_atexit=yes
++  use_gcc_stdint=wrap
++  thread_file="posix"
+   ;;
+ *-*-linux* | frv-*-*linux* | *-*-kfreebsd*-gnu | *-*-gnu* | *-*-kopensolaris*-gnu | *-*-uclinuxfdpiceabi)
+   extra_options="$extra_options gnu-user.opt"
+@@ -1935,6 +1947,10 @@
+ x86_64-*-elf*)
+ 	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h"
+ 	;;
++x86_64-*-boredos*)
++	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h glibc-stdint.h i386/x86-64.h boredos.h"
++	tmake_file="${tmake_file} i386/t-linux64"
++	;;
+ x86_64-*-rtems*)
+ 	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h i386/rtemself.h rtems.h"
+ 	;;
+--- a/libgcc/config.host
++++ b/libgcc/config.host
+@@ -1568,6 +1568,10 @@
+ nvptx-*)
+ 	tmake_file="$tmake_file nvptx/t-nvptx"
+ 	extra_parts="crt0.o"
++	;;
++x86_64-*-boredos*)
++	extra_parts="$extra_parts crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o"
++	tmake_file="$tmake_file i386/t-crtstuff t-crtstuff-pic t-libgcc-pic"
+ 	;;
+ *)
+ 	echo "*** Configuration ${host} not supported" 1>&2
+--- a/libstdc++-v3/configure.ac
++++ b/libstdc++-v3/configure.ac
+@@ -1,4 +1,5 @@
+ # Process this file with autoreconf to produce a configure script.
++m4_define([_GCC_AUTOCONF_VERSION_CHECK], [])
+ 
+ AC_INIT(package-unused, version-unused,, libstdc++)
+ AC_CONFIG_SRCDIR(src/shared/hashtable-aux.cc)
+@@ -403,7 +404,17 @@
+         ;;
+     esac
+   elif test "x$with_headers" != "xno"; then
+-    GLIBCXX_CROSSCONFIG
++    case "$host" in
++      *-boredos*)
++        GLIBCXX_CHECK_COMPILER_FEATURES
++        GLIBCXX_CHECK_LINKER_FEATURES
++        GLIBCXX_CHECK_MATH_SUPPORT
++        GLIBCXX_CHECK_STDLIB_SUPPORT
++        ;;
++      *)
++        GLIBCXX_CROSSCONFIG
++        ;;
++    esac
+   fi
+ 
+   # At some point, we should differentiate between architectures
+--- a/libstdc++-v3/configure.host
++++ b/libstdc++-v3/configure.host
+@@ -206,6 +206,9 @@
+ # CPU-specifc, set those here too.
+ # THIS TABLE IS SORTED.  KEEP IT THAT WAY.
+ case "${host_os}" in
++  boredos*)
++    os_include_dir="os/generic"
++    ;;
+   aix[56789]*)
+     # Newer versions of AIX only support PowerPC architecture, so use
+     # atomic instructions directly.
+--- a/gcc/config/boredos.h	(revision 0)
++++ b/gcc/config/boredos.h
+@@ -0,0 +1,31 @@
++#undef TARGET_BOREDOS
++#define TARGET_BOREDOS 1
++
++#undef TARGET_OS_CPP_BUILTINS
++#define TARGET_OS_CPP_BUILTINS()      \
++  do {                                \
++    builtin_define ("__boredos__");   \
++    builtin_define ("__unix__");      \
++    builtin_assert ("system=boredos");\
++    builtin_assert ("system=unix");   \
++  } while (0)
++
++#undef STARTFILE_SPEC
++#define STARTFILE_SPEC \
++  "%{!shared: %{static:crt0.o%s; :crt1.o%s}} crti.o%s \
++   %{static:crtbeginT.o%s; shared|pie:crtbeginS.o%s; :crtbegin.o%s}"
++
++#undef ENDFILE_SPEC
++#define ENDFILE_SPEC \
++  "%{static:crtend.o%s; shared|pie:crtendS.o%s; :crtend.o%s} crtn.o%s"
++
++#undef LIB_SPEC
++#define LIB_SPEC "-lc"
++
++#undef DYNAMIC_LINKER
++#define DYNAMIC_LINKER "/lib/ld.so"
++
++#undef LINK_SPEC
++#define LINK_SPEC "%{shared:-shared} \
++  %{!shared: %{!static: %{rdynamic:-export-dynamic} \
++  -dynamic-linker " DYNAMIC_LINKER "} %{static:-static}}"

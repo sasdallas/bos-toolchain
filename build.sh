@@ -31,7 +31,7 @@ if command -v gmake &>/dev/null; then
     MAKE="gmake"
 fi
 
-need curl; need "${MAKE}"; need tar; need strip; need meson; need ninja
+need curl; need "${MAKE}"; need tar; need strip; need meson; need ninja; need patch
 MLIBC_SRC=""
 CLEANUP_MLIBC=false
 if [[ -d "${REPO_ROOT}/usr/mlibc" ]]; then
@@ -79,163 +79,14 @@ fi
 
 patch_binutils() {
     log "Patching binutils..."
-    python3 -c '
-import sys
-
-def replace_or_die(filename, search, replace):
-    with open(filename, "r") as f:
-        content = f.read()
-    if search not in content:
-        print(f"ERROR: Substring not found in {filename}:", repr(search), file=sys.stderr)
-        sys.exit(1)
-    with open(filename, "w") as f:
-        f.write(content.replace(search, replace))
-
-# patch config.sub
-replace_or_die("binutils-2.42/config.sub", "| mlibc* |", "| mlibc* | boredos* |")
-
-# patch bfd/config.bfd
-replace_or_die("binutils-2.42/bfd/config.bfd",
-               "x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia | x86_64-*-genode*)",
-               "x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia | x86_64-*-genode* | x86_64-*-boredos*)")
-
-# patch gas/configure.tgt
-replace_or_die("binutils-2.42/gas/configure.tgt",
-               "i386-*-elf*)",
-               "i386-*-elf* | i386-*-boredos*)")
-
-# patch ld/configure.tgt
-replace_or_die("binutils-2.42/ld/configure.tgt",
-               "x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia* | x86_64-*-genode*)",
-               "x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia* | x86_64-*-genode* | x86_64-*-boredos*)")
-'
+    patch -d "binutils-${BINUTILS_VERSION}" -p1 < "${SCRIPT_DIR}/patches/binutils-${BINUTILS_VERSION}.patch"
 }
 
 patch_gcc() {
     log "Patching gcc..."
-    python3 -c '
-import sys
-
-def replace_or_die(filename, search, replace):
-    with open(filename, "r") as f:
-        content = f.read()
-    if search not in content:
-        print(f"ERROR: Substring not found in {filename}:", repr(search), file=sys.stderr)
-        sys.exit(1)
-    with open(filename, "w") as f:
-        f.write(content.replace(search, replace))
-
-# patch config.sub
-replace_or_die("gcc-14.2.0/config.sub", "| fiwix* )", "| fiwix* | boredos* )")
-
-with open("gcc-14.2.0/gcc/config.gcc", "r") as f:
-    content = f.read()
-
-common_search = """# Common parts for widely ported systems.
-case ${target} in
-*-*-linux* | *-*-uclinux*)"""
-
-common_replace = """# Common parts for widely ported systems.
-case ${target} in
-*-*-boredos*)
-  gas=yes
-  gnu_ld=yes
-  default_use_cxa_atexit=yes
-  use_gcc_stdint=wrap
-  thread_file="posix"
-  ;;
-*-*-linux* | *-*-uclinux*)"""
-
-if common_search in content:
-    content = content.replace(common_search, common_replace)
-else:
-    search_fallback = "case ${target} in\n*-*-linux*"
-    if search_fallback not in content:
-         print("ERROR: Could not find target case block in config.gcc", file=sys.stderr)
-         sys.exit(1)
-    content = content.replace(search_fallback, "case ${target} in\n*-*-boredos*)\n  gas=yes\n  gnu_ld=yes\n  default_use_cxa_atexit=yes\n  use_gcc_stdint=wrap\n  thread_file=\"posix\"\n  ;;\n*-*-linux*")
-
-# patch gcc/config.gcc (x86_64-*-elf* target block)
-target_block = """x86_64-*-elf*)
-    tm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h"
-    ;;"""
-
-boredos_target = """x86_64-*-boredos*)
-    tm_file="${tm_file} i386/unix.h i386/att.h elfos.h glibc-stdint.h i386/x86-64.h boredos.h"
-    tmake_file="${tmake_file} i386/t-linux64"
-    ;;"""
-
-if target_block in content:
-    content = content.replace(target_block, target_block + "\n" + boredos_target)
-else:
-    import re
-    pattern = r"(x86_64-\*-elf\*\).*?;;)"
-    content, count = re.subn(pattern, r"\1\n" + boredos_target, content, flags=re.DOTALL)
-    if count == 0:
-        print("ERROR: Could not find x86_64-*-elf* block in config.gcc", file=sys.stderr)
-        sys.exit(1)
-
-with open("gcc-14.2.0/gcc/config.gcc", "w") as f:
-    f.write(content)
-
-# patch libstdc++-v3/configure.host
-replace_or_die("gcc-14.2.0/libstdc++-v3/configure.host",
-               "\ncase \"${host_os}\" in",
-               "\ncase \"${host_os}\" in\n  boredos*)\n    os_include_dir=\"os/generic\"\n    ;;")
-
-# Neutralize cross-compilation safety valve exit block in libstdc++ configure script
-with open("gcc-14.2.0/libstdc++-v3/configure", "r") as f:
-    lines = f.readlines()
-
-patched_cross_check = False
-for i, line in enumerate(lines):
-    if "No support for this host/target combination." in line:
-        lines[i] = '      echo "Bypassing unsupported libstdc++ target validation block for boredos"\n'
-        patched_cross_check = True
-
-if not patched_cross_check:
-    print("ERROR: Target sanity check line not found in libstdc++-v3/configure", file=sys.stderr)
-    sys.exit(1)
-
-with open("gcc-14.2.0/libstdc++-v3/configure", "w") as f:
-    f.writelines(lines)
-
-# patch libgcc/config.host
-with open("gcc-14.2.0/libgcc/config.host", "r") as f:
-    content = f.read()
-
-boredos_libgcc = (
-    "x86_64-*-boredos*)\n"
-    "\textra_parts=\"$extra_parts crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o\"\n"
-    "\ttmake_file=\"$tmake_file i386/t-crtstuff t-crtstuff-pic t-libgcc-pic\"\n"
-    "\t;;\n"
-)
-
-catchall = (
-    "*)\n"
-    "\techo \"*** Configuration ${host} not supported\" 1>&2\n"
-    "\texit 1\n"
-    "\t;;\n"
-    "esac"
-)
-
-if catchall not in content:
-    print("ERROR: Could not find libgcc/config.host catch-all arm", file=sys.stderr)
-    sys.exit(1)
-
-content = content.replace(catchall, boredos_libgcc + catchall, 1)
-
-with open("gcc-14.2.0/libgcc/config.host", "w") as f:
-    f.write(content)
-'
-    log "Sanity-checking libgcc/config.host patch..."
-    if ! awk '
-        /x86_64-\*-boredos\*\)/ { found_entry=1 }
-        found_entry && /\*\*\* Configuration \$\{host\} not supported/ { print "OK"; exit }
-    ' "gcc-${GCC_VERSION}/libgcc/config.host" | grep -q OK; then
-        die "libgcc/config.host patch did not land right before the real catch-all. aborting before build"
-    fi
-    log "libgcc/config.host patch verified OK (entry precedes the real catch-all)."
+    patch -d "gcc-${GCC_VERSION}" -p1 < "${SCRIPT_DIR}/patches/gcc-${GCC_VERSION}.patch"
+    log "Regenerating libstdc++ configure script..."
+    (cd "gcc-${GCC_VERSION}/libstdc++-v3" && autoconf)
 }
 
 log "Building ${TARGET_NAME} Stage 2 cross-toolchain → ${PREFIX}"
@@ -280,13 +131,14 @@ mkdir -p build-binutils
         --disable-nls \
         --disable-werror \
         --disable-multilib \
+        --with-system-zlib \
         ${EXTRA_CONFIGURE})
 
 log "Building binutils (${JOBS} jobs)..."
-"${MAKE}" -C build-binutils -j"${JOBS}"
+"${MAKE}" -C build-binutils -j"${JOBS}" MAKEINFO=true
 
 log "Installing binutils..."
-"${MAKE}" -C build-binutils install
+"${MAKE}" -C build-binutils install MAKEINFO=true
 
 # ── Install mlibc Headers (Breaks Bootstrap Cycle) ───────────────────────────
 log "Installing mlibc headers to sysroot..."
@@ -322,40 +174,6 @@ rm -f "${GCC_TAR}"
 
 patch_gcc
 
-cat << 'EOF' > "gcc-${GCC_VERSION}/gcc/config/boredos.h"
-#undef TARGET_BOREDOS
-#define TARGET_BOREDOS 1
-
-#undef TARGET_OS_CPP_BUILTINS
-#define TARGET_OS_CPP_BUILTINS()      \
-  do {                                \
-    builtin_define ("__boredos__");   \
-    builtin_define ("__unix__");      \
-    builtin_assert ("system=boredos");\
-    builtin_assert ("system=unix");   \
-  } while (0)
-
-#undef STARTFILE_SPEC
-#define STARTFILE_SPEC \
-  "%{!shared: %{static:crt0.o%s; :crt1.o%s}} crti.o%s \
-   %{static:crtbeginT.o%s; shared|pie:crtbeginS.o%s; :crtbegin.o%s}"
-
-#undef ENDFILE_SPEC
-#define ENDFILE_SPEC \
-  "%{static:crtend.o%s; shared|pie:crtendS.o%s; :crtend.o%s} crtn.o%s"
-
-#undef LIB_SPEC
-#define LIB_SPEC "-lc"
-
-#undef DYNAMIC_LINKER
-#define DYNAMIC_LINKER "/lib/ld.so"
-
-#undef LINK_SPEC
-#define LINK_SPEC "%{shared:-shared} \
-  %{!shared: %{!static: %{rdynamic:-export-dynamic} \
-  -dynamic-linker " DYNAMIC_LINKER "} %{static:-static}}"
-EOF
-
 log "Configuring gcc Stage 1 (Freestanding)..."
 mkdir -p build-gcc-stage1
 (cd build-gcc-stage1 && \
@@ -374,13 +192,14 @@ mkdir -p build-gcc-stage1
         --disable-libgomp \
         --disable-libatomic \
         --disable-libstdcxx \
+        --with-system-zlib \
         ${EXTRA_CONFIGURE})
 
 log "Building gcc Stage 1 (${JOBS} jobs)..."
-"${MAKE}" -C build-gcc-stage1 -j"${JOBS}" all-gcc all-target-libgcc
+"${MAKE}" -C build-gcc-stage1 -j"${JOBS}" all-gcc all-target-libgcc MAKEINFO=true
 
 log "Installing gcc Stage 1..."
-"${MAKE}" -C build-gcc-stage1 install-gcc install-target-libgcc
+"${MAKE}" -C build-gcc-stage1 install-gcc install-target-libgcc MAKEINFO=true
 
 # ── Build and install full mlibc to sysroot ──────────────────────────────────
 log "Configuring full mlibc..."
@@ -419,13 +238,14 @@ mkdir -p build-gcc-stage2
         --disable-libgomp \
         --disable-libatomic \
         --enable-threads=posix \
+        --with-system-zlib \
         ${EXTRA_CONFIGURE})
 
 log "Building gcc Stage 2 (Hosted, ${JOBS} jobs)..."
-"${MAKE}" -C build-gcc-stage2 -j"${JOBS}"
+"${MAKE}" -C build-gcc-stage2 -j"${JOBS}" MAKEINFO=true
 
 log "Installing gcc Stage 2..."
-"${MAKE}" -C build-gcc-stage2 install
+"${MAKE}" -C build-gcc-stage2 install MAKEINFO=true
 
 log "Cleaning up build directories..."
 rm -rf \
