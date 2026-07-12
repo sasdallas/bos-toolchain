@@ -42,6 +42,17 @@ curl -fsSL --retry 3 "${DOWNLOAD_URL}" | tar -xJ -C "$(dirname "${PREFIX}")"
 
 # Verify installation
 TOOLCHAIN_GCC="${PREFIX}/bin/x86_64-boredos-gcc"
+if [[ ! -x "${TOOLCHAIN_GCC}" ]]; then
+    # Fallback: check if this is an older x86_64-elf toolchain and recreate symlinks
+    if [[ -x "${PREFIX}/bin/x86_64-elf-gcc" ]]; then
+        log "Old x86_64-elf toolchain detected. Recreating symlinks for compatibility..."
+        for bin in "${PREFIX}/bin/x86_64-elf-"*; do
+            tool="${bin##*x86_64-elf-}"
+            ln -sf "x86_64-elf-${tool}" "${PREFIX}/bin/x86_64-boredos-${tool}"
+        done
+    fi
+fi
+
 [[ -x "${TOOLCHAIN_GCC}" ]] || die "Installation failed: ${TOOLCHAIN_GCC} not found"
 
 log "Toolchain installed successfully."
