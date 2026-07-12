@@ -6,7 +6,7 @@ set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────────────
 BINUTILS_VERSION="2.42"
-GCC_VERSION="14.2.0"
+GCC_VERSION="12.2.0"
 TARGET_BUILD="x86_64-boredos"
 TARGET_NAME="x86_64-boredos"
 
