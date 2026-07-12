@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 BoredOS contributors
-# install.sh — Downloads and installs the pre-built x86_64-boredos toolchain.
-# Streams the tarball directly into tar to avoid writing a temp file to disk.
-#
-# Usage: bash install.sh [--prefix /opt/boredos-toolchain]
+# Copyright (c) 2023-2026 Christiaan (chris@boreddev.nl)
+# This software is released under the GNU General Public License v3.0. See LICENSE file for details.
+# This header needs to maintain in any file it is present in, as per the GPL license terms.
 
 set -euo pipefail
 
@@ -38,17 +36,9 @@ DOWNLOAD_URL=$(curl -fsSL "${API_URL}" \
 
 log "Installing toolchain to ${PREFIX}..."
 log "Streaming from: ${DOWNLOAD_URL}"
-
-# Stream directly — no intermediate .tar.xz written to disk
 mkdir -p "$(dirname "${PREFIX}")"
 curl -fsSL --retry 3 "${DOWNLOAD_URL}" | tar -xJ -C "$(dirname "${PREFIX}")"
 
-# Recreate relative symlinks to make the toolchain relocatable
-log "Fixing relocatable symlinks..."
-for bin in "${PREFIX}/bin/x86_64-elf-"*; do
-    tool="${bin##*x86_64-elf-}"
-    ln -sf "x86_64-elf-${tool}" "${PREFIX}/bin/x86_64-boredos-${tool}"
-done
 
 # Verify installation
 TOOLCHAIN_GCC="${PREFIX}/bin/x86_64-boredos-gcc"

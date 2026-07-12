@@ -1,11 +1,12 @@
-#!/usr/bin/env bash
-# Copyright (c) 2026 BoredOS contributors
+# Copyright (c) 2023-2026 Christiaan (chris@boreddev.nl)
+# This software is released under the GNU General Public License v3.0. See LICENSE file for details.
+# This header needs to maintain in any file it is present in, as per the GPL license terms.
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────────────
 BINUTILS_VERSION="2.42"
 GCC_VERSION="14.2.0"
-TARGET_BUILD="x86_64-elf"
+TARGET_BUILD="x86_64-boredos"
 TARGET_NAME="x86_64-boredos"
 
 PREFIX="${1:-/opt/boredos-toolchain}"
@@ -15,6 +16,9 @@ BINUTILS_TAR="binutils-${BINUTILS_VERSION}.tar.xz"
 GCC_TAR="gcc-${GCC_VERSION}.tar.xz"
 BINUTILS_URL="https://ftp.gnu.org/gnu/binutils/${BINUTILS_TAR}"
 GCC_URL="https://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/${GCC_TAR}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 log()  { echo "==> $*"; }
@@ -26,9 +30,155 @@ if command -v gmake &>/dev/null; then
     MAKE="gmake"
 fi
 
-need curl; need "${MAKE}"; need tar; need strip
+need curl; need "${MAKE}"; need tar; need strip; need meson; need ninja
+MLIBC_SRC=""
+CLEANUP_MLIBC=false
+if [[ -d "${REPO_ROOT}/usr/mlibc" ]]; then
+    log "Found local mlibc at ${REPO_ROOT}/usr/mlibc"
+    MLIBC_SRC="${REPO_ROOT}/usr/mlibc"
+else
+    MLIBC_SRC="${SCRIPT_DIR}/mlibc-src"
+    if [[ ! -d "${MLIBC_SRC}" ]]; then
+        log "Local mlibc not found. Cloning from https://github.com/BoredOS/mlibc..."
+        need git
+        git clone --depth 1 https://github.com/BoredOS/mlibc.git "${MLIBC_SRC}"
+        CLEANUP_MLIBC=true
+    else
+        log "Using previously cloned mlibc at ${MLIBC_SRC}"
+    fi
+fi
 
-log "Building ${TARGET_NAME} cross-toolchain → ${PREFIX}"
+CROSS_FILE=""
+CLEANUP_CROSS_FILE=false
+if [[ -f "${REPO_ROOT}/tools/cross_file.txt" ]]; then
+    log "Using local cross_file.txt from ${REPO_ROOT}/tools/cross_file.txt"
+    CROSS_FILE="${REPO_ROOT}/tools/cross_file.txt"
+else
+    CROSS_FILE="${SCRIPT_DIR}/cross_file_dynamic.txt"
+    log "Generating dynamic cross file at ${CROSS_FILE}..."
+    cat << 'EOF' > "${CROSS_FILE}"
+[binaries]
+c = 'x86_64-boredos-gcc'
+cpp = 'x86_64-boredos-g++'
+ar = 'x86_64-boredos-ar'
+strip = 'x86_64-boredos-strip'
+
+[host_machine]
+system = 'boredos'
+cpu_family = 'x86_64'
+cpu = 'x86_64'
+endian = 'little'
+
+[properties]
+c_args = ['-D_GNU_SOURCE', '-D_DEFAULT_SOURCE']
+cpp_args = ['-D_GNU_SOURCE', '-D_DEFAULT_SOURCE']
+EOF
+    CLEANUP_CROSS_FILE=true
+fi
+
+patch_binutils() {
+    log "Patching binutils..."
+    python3 -c '
+import sys
+# patch config.sub
+with open("binutils-2.42/config.sub", "r") as f:
+    content = f.read()
+content = content.replace("| mlibc* |", "| mlibc* | boredos* |")
+with open("binutils-2.42/config.sub", "w") as f:
+    f.write(content)
+
+# patch bfd/config.bfd
+with open("binutils-2.42/bfd/config.bfd", "r") as f:
+    content = f.read()
+content = content.replace("x86_64-*-elf* | x86_64-*-rtems*)", "x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-boredos*)")
+with open("binutils-2.42/bfd/config.bfd", "w") as f:
+    f.write(content)
+
+# patch gas/configure.tgt
+with open("binutils-2.42/gas/configure.tgt", "r") as f:
+    content = f.read()
+content = content.replace("i386-*-elf* | x86_64-*-elf*)", "i386-*-elf* | x86_64-*-elf* | x86_64-*-boredos*)")
+with open("binutils-2.42/gas/configure.tgt", "w") as f:
+    f.write(content)
+
+# patch ld/configure.tgt
+with open("binutils-2.42/ld/configure.tgt", "r") as f:
+    content = f.read()
+content = content.replace("x86_64-*-elf*)", "x86_64-*-elf* | x86_64-*-boredos*)")
+with open("binutils-2.42/ld/configure.tgt", "w") as f:
+    f.write(content)
+'
+}
+
+patch_gcc() {
+    log "Patching gcc..."
+    python3 -c '
+import sys
+
+# patch config.sub
+with open("gcc-14.2.0/config.sub", "r") as f:
+    content = f.read()
+content = content.replace("| mlibc* |", "| mlibc* | boredos* |")
+with open("gcc-14.2.0/config.sub", "w") as f:
+    f.write(content)
+
+# patch gcc/config.gcc (common parts)
+with open("gcc-14.2.0/gcc/config.gcc", "r") as f:
+    content = f.read()
+
+common_search = """# Common parts for widely ported systems.
+case ${target} in
+*-*-linux* | *-*-uclinux*)"""
+
+common_replace = """# Common parts for widely ported systems.
+case ${target} in
+*-*-boredos*)
+  gas=yes
+  gnu_ld=yes
+  default_use_cxa_atexit=yes
+  use_gcc_stdint=wrap
+  ;;
+*-*-linux* | *-*-uclinux*)"""
+
+if common_search in content:
+    content = content.replace(common_search, common_replace)
+else:
+    content = content.replace("case ${target} in\n*-*-linux*", "case ${target} in\n*-*-boredos*)\n  gas=yes\n  gnu_ld=yes\n  default_use_cxa_atexit=yes\n  use_gcc_stdint=wrap\n  ;;\n*-*-linux*")
+
+# patch gcc/config.gcc (x86_64-*-elf* target)
+target_block = """x86_64-*-elf*)
+	tm_file="${tm_file} i386/unix.h i386/att.h dbxelf.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h"
+	tmake_file="${tmake_file} i386/t-i386elf"
+	;;"""
+
+boredos_target = """x86_64-*-boredos*)
+	tm_file="${tm_file} i386/unix.h i386/att.h dbxelf.h elfos.h glibc-stdint.h i386/x86-64.h boredos.h"
+	tmake_file="${tmake_file} i386/t-linux64"
+	;;"""
+
+if target_block in content:
+    content = content.replace(target_block, target_block + "\n" + boredos_target)
+else:
+    import re
+    pattern = r"(x86_64-\*-elf\*\).*?;;)"
+    content, count = re.subn(pattern, r"\1\n" + boredos_target, content, flags=re.DOTALL)
+    if count == 0:
+        print("ERROR: Could not find x86_64-*-elf* block in config.gcc", file=sys.stderr)
+        sys.exit(1)
+
+with open("gcc-14.2.0/gcc/config.gcc", "w") as f:
+    f.write(content)
+
+# patch libstdc++-v3/configure.host
+with open("gcc-14.2.0/libstdc++-v3/configure.host", "r") as f:
+    content = f.read()
+content = content.replace("\ncase \"${host_os}\" in", "\ncase \"${host_os}\" in\n  boredos*)\n    os_include_dir=\"os/generic\"\n    ;;")
+with open("gcc-14.2.0/libstdc++-v3/configure.host", "w") as f:
+    f.write(content)
+'
+}
+
+log "Building ${TARGET_NAME} Stage 2 cross-toolchain → ${PREFIX}"
 log "  binutils ${BINUTILS_VERSION}, gcc ${GCC_VERSION}"
 log "  Using ${JOBS} parallel jobs"
 
@@ -38,11 +188,9 @@ export PATH="${PREFIX}/bin:${PATH}"
 # ── Detect host GMP/MPFR/MPC ────────────────────────────────────────────────
 EXTRA_CONFIGURE=""
 if command -v brew &>/dev/null; then
-    # macOS: use brew --prefix to get the correct path on both Intel and arm64
     BREW_PREFIX=$(brew --prefix)
     log "Using Homebrew GMP/MPFR/MPC at ${BREW_PREFIX}"
     EXTRA_CONFIGURE="--with-gmp=${BREW_PREFIX} --with-mpfr=${BREW_PREFIX} --with-mpc=${BREW_PREFIX}"
-    # GCC configure needs headers on CPPFLAGS and libs on LDFLAGS
     export CPPFLAGS="-I${BREW_PREFIX}/include"
     export LDFLAGS="-L${BREW_PREFIX}/lib"
 elif pkg-config --exists gmp mpfr mpc 2>/dev/null; then
@@ -58,7 +206,9 @@ curl -fsSL --retry 3 "${BINUTILS_URL}" -o "${BINUTILS_TAR}"
 
 log "Extracting binutils..."
 tar -xf "${BINUTILS_TAR}"
-rm -f "${BINUTILS_TAR}"                  # free tarball immediately
+rm -f "${BINUTILS_TAR}"
+
+patch_binutils
 
 log "Configuring binutils..."
 mkdir -p build-binutils
@@ -66,7 +216,7 @@ mkdir -p build-binutils
     "../binutils-${BINUTILS_VERSION}/configure" \
         --target="${TARGET_BUILD}" \
         --prefix="${PREFIX}" \
-        --with-sysroot \
+        --with-sysroot="${PREFIX}/${TARGET_NAME}" \
         --disable-nls \
         --disable-werror \
         --disable-multilib \
@@ -78,10 +228,7 @@ log "Building binutils (${JOBS} jobs)..."
 log "Installing binutils..."
 "${MAKE}" -C build-binutils install
 
-log "Cleaning binutils build artifacts..."
-rm -rf build-binutils "binutils-${BINUTILS_VERSION}"
-
-# ── Build GCC ─────────────────────────────────────────────────────────────────
+# ── Build GCC Stage 1 (Freestanding / Bootstrap) ─────────────────────────────────
 log "Downloading gcc ${GCC_VERSION}..."
 curl -fsSL --retry 3 "${GCC_URL}" -o "${GCC_TAR}"
 
@@ -89,12 +236,51 @@ log "Extracting gcc..."
 tar -xf "${GCC_TAR}"
 rm -f "${GCC_TAR}"
 
-log "Configuring gcc..."
-mkdir -p build-gcc
-(cd build-gcc && \
+patch_gcc
+
+cat << 'EOF' > "gcc-${GCC_VERSION}/gcc/config/boredos.h"
+#undef TARGET_BOREDOS
+#define TARGET_BOREDOS 1
+
+#undef TARGET_OS_CPP_BUILTINS
+#define TARGET_OS_CPP_BUILTINS()      \
+  do {                                \
+    builtin_define ("__boredos__");   \
+    builtin_define ("__unix__");      \
+    builtin_assert ("system=boredos");\
+    builtin_assert ("system=unix");   \
+  } while (0)
+
+#undef STARTFILE_SPEC
+#define STARTFILE_SPEC \
+  "%{!shared: %{static:crt0.o%s; :crt1.o%s}} crti.o%s \
+   %{static:crtbeginT.o%s; shared|pie:crtbeginS.o%s; :crtbegin.o%s}"
+
+#undef ENDFILE_SPEC
+#define ENDFILE_SPEC \
+  "%{static:crtend.o%s; shared|pie:crtendS.o%s; :crtend.o%s} crtn.o%s"
+
+#undef LIB_SPEC
+#define LIB_SPEC "-lc"
+
+#undef DYNAMIC_LINKER
+#define DYNAMIC_LINKER "/lib/ld.so"
+
+#undef LINK_SPEC
+#define LINK_SPEC "%{shared:-shared} \
+  %{!shared: %{!static: %{rdynamic:-export-dynamic} \
+  -dynamic-linker " DYNAMIC_LINKER "} %{static:-static}}"
+
+#define NO_IMPLICIT_EXTERN_C 1
+EOF
+
+log "Configuring gcc Stage 1 (Freestanding)..."
+mkdir -p build-gcc-stage1
+(cd build-gcc-stage1 && \
     "../gcc-${GCC_VERSION}/configure" \
         --target="${TARGET_BUILD}" \
         --prefix="${PREFIX}" \
+        --with-sysroot="${PREFIX}/${TARGET_NAME}" \
         --enable-languages=c,c++ \
         --without-headers \
         --disable-nls \
@@ -107,14 +293,70 @@ mkdir -p build-gcc
         --disable-libstdcxx \
         ${EXTRA_CONFIGURE})
 
-log "Building gcc (${JOBS} jobs)..."
-"${MAKE}" -C build-gcc -j"${JOBS}" all-gcc all-target-libgcc
+log "Building gcc Stage 1 (${JOBS} jobs)..."
+"${MAKE}" -C build-gcc-stage1 -j"${JOBS}" all-gcc all-target-libgcc
 
-log "Installing gcc..."
-"${MAKE}" -C build-gcc install-gcc install-target-libgcc
+log "Installing gcc Stage 1..."
+"${MAKE}" -C build-gcc-stage1 install-gcc install-target-libgcc
 
-log "Cleaning gcc build artifacts..."
-rm -rf build-gcc "gcc-${GCC_VERSION}"
+# ── Build and install mlibc to sysroot ──────────────────────────────────────────
+log "Configuring mlibc..."
+mkdir -p build-mlibc
+(cd build-mlibc && \
+    meson setup \
+        --cross-file "${CROSS_FILE}" \
+        --prefix="${PREFIX}/${TARGET_NAME}/usr" \
+        --libdir=lib \
+        -Ddefault_library=static \
+        -Dheaders_only=false \
+        -Dposix_option=enabled \
+        -Dlinux_option=disabled \
+        -Dglibc_option=disabled \
+        -Dbsd_option=disabled \
+        "${MLIBC_SRC}")
+
+log "Building and installing mlibc to sysroot..."
+ninja -C build-mlibc install
+
+# ── Build GCC Stage 2 (Hosted) ────────────────────────────────────────────────
+log "Configuring gcc Stage 2 (Hosted)..."
+mkdir -p build-gcc-stage2
+(cd build-gcc-stage2 && \
+    "../gcc-${GCC_VERSION}/configure" \
+        --target="${TARGET_BUILD}" \
+        --prefix="${PREFIX}" \
+        --with-sysroot="${PREFIX}/${TARGET_NAME}" \
+        --enable-languages=c,c++ \
+        --enable-shared \
+        --disable-nls \
+        --disable-multilib \
+        --disable-bootstrap \
+        --disable-libssp \
+        --disable-libquadmath \
+        --disable-libgomp \
+        --disable-libatomic \
+        --enable-threads=posix \
+        ${EXTRA_CONFIGURE})
+
+log "Building gcc Stage 2 (Hosted, ${JOBS} jobs)..."
+"${MAKE}" -C build-gcc-stage2 -j"${JOBS}"
+
+log "Installing gcc Stage 2..."
+"${MAKE}" -C build-gcc-stage2 install
+
+log "Cleaning up build directories..."
+rm -rf \
+    build-binutils "binutils-${BINUTILS_VERSION}" \
+    build-gcc-stage1 build-gcc-stage2 "gcc-${GCC_VERSION}" \
+    build-mlibc
+if [[ "${CLEANUP_MLIBC}" == "true" ]]; then
+    log "Removing cloned mlibc..."
+    rm -rf "${MLIBC_SRC}"
+fi
+if [[ "${CLEANUP_CROSS_FILE}" == "true" ]]; then
+    log "Removing dynamic cross file..."
+    rm -f "${CROSS_FILE}"
+fi
 
 log "Stripping executables..."
 find "${PREFIX}/bin" -type f -executable \
@@ -133,15 +375,6 @@ rm -rf \
     "${PREFIX}/share/gcc-"*/python3
 find "${PREFIX}" -name "*.la" -delete   
 
-# ── Symlinks for the x86_64-boredos-* names ──────────────────────────────────
-log "Installing x86_64-boredos-* symlinks..."
-for bin in "${PREFIX}/bin/${TARGET_BUILD}-"*; do
-    tool="${bin##*${TARGET_BUILD}-}"
-    ln -sf "${PREFIX}/bin/${TARGET_BUILD}-${tool}" \
-           "${PREFIX}/bin/${TARGET_NAME}-${tool}"
-done
-
-# ── Package ───────────────────────────────────────────────────────────────────
 HOST_OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 HOST_ARCH=$(uname -m)
 TARBALL="boredos-toolchain-${HOST_ARCH}-${HOST_OS}.tar.xz"
