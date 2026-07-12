@@ -128,7 +128,7 @@ def replace_or_die(filename, search, replace):
 # patch config.sub
 replace_or_die("gcc-14.2.0/config.sub", "| fiwix* )", "| fiwix* | boredos* )")
 
-# patch gcc/config.gcc (common parts)
+# patch gcc/config.gcc (common parts & thread feature configuration cascading)
 with open("gcc-14.2.0/gcc/config.gcc", "r") as f:
     content = f.read()
 
@@ -143,6 +143,7 @@ case ${target} in
   gnu_ld=yes
   default_use_cxa_atexit=yes
   use_gcc_stdint=wrap
+  thread_file="posix"
   ;;
 *-*-linux* | *-*-uclinux*)"""
 
@@ -153,7 +154,7 @@ else:
     if search_fallback not in content:
          print("ERROR: Could not find target case block in config.gcc", file=sys.stderr)
          sys.exit(1)
-    content = content.replace(search_fallback, "case ${target} in\n*-*-boredos*)\n  gas=yes\n  gnu_ld=yes\n  default_use_cxa_atexit=yes\n  use_gcc_stdint=wrap\n  ;;\n*-*-linux*")
+    content = content.replace(search_fallback, "case ${target} in\n*-*-boredos*)\n  gas=yes\n  gnu_ld=yes\n  default_use_cxa_atexit=yes\n  use_gcc_stdint=wrap\n  thread_file=\"posix\"\n  ;;\n*-*-linux*")
 
 # patch gcc/config.gcc (x86_64-*-elf* target block)
 target_block = """x86_64-*-elf*)
@@ -182,11 +183,6 @@ with open("gcc-14.2.0/gcc/config.gcc", "w") as f:
 replace_or_die("gcc-14.2.0/libstdc++-v3/configure.host",
                "\ncase \"${host_os}\" in",
                "\ncase \"${host_os}\" in\n  boredos*)\n    os_include_dir=\"os/generic\"\n    ;;")
-
-# patch libstdc++-v3/configure target checks to whitelist boredos matching linux configurations
-replace_or_die("gcc-14.2.0/libstdc++-v3/configure",
-               "*-linux* | *-uclinux* | *-gnu* | *-kfreebsd*-gnu | *-knetbsd*-gnu)",
-               "*-linux* | *-uclinux* | *-gnu* | *-kfreebsd*-gnu | *-knetbsd*-gnu | *-boredos*)")
 
 # patch libgcc/config.host
 with open("gcc-14.2.0/libgcc/config.host", "r") as f:
