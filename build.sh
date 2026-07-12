@@ -157,13 +157,13 @@ else:
 
 # patch gcc/config.gcc (x86_64-*-elf* target)
 target_block = """x86_64-*-elf*)
-	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h"
-	;;"""
+    tm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h"
+    ;;"""
 
 boredos_target = """x86_64-*-boredos*)
-	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h glibc-stdint.h i386/x86-64.h boredos.h"
-	tmake_file="${tmake_file} i386/t-linux64"
-	;;"""
+    tm_file="${tm_file} i386/unix.h i386/att.h elfos.h glibc-stdint.h i386/x86-64.h boredos.h"
+    tmake_file="${tmake_file} i386/t-linux64"
+    ;;"""
 
 if target_block in content:
     content = content.replace(target_block, target_block + "\n" + boredos_target)
@@ -271,6 +271,24 @@ log "Building binutils (${JOBS} jobs)..."
 log "Installing binutils..."
 "${MAKE}" -C build-binutils install
 
+log "Installing mlibc headers to sysroot..."
+mkdir -p build-mlibc-headers
+(cd build-mlibc-headers && \
+    meson setup \
+        --cross-file "${CROSS_FILE}" \
+        --prefix="${PREFIX}/${TARGET_NAME}/usr" \
+        --libdir=lib \
+        -Ddefault_library=static \
+        -Dheaders_only=true \
+        -Dposix_option=enabled \
+        -Dlinux_option=disabled \
+        -Dglibc_option=disabled \
+        -Dbsd_option=disabled \
+        "${MLIBC_SRC}")
+
+log "Running header installation..."
+ninja -C build-mlibc-headers install
+
 # ── Build GCC Stage 1 (Freestanding / Bootstrap) ─────────────────────────────────
 log "Downloading gcc ${GCC_VERSION}..."
 curl -fsSL --retry 3 "${GCC_URL}" -o "${GCC_TAR}"
@@ -341,8 +359,8 @@ log "Building gcc Stage 1 (${JOBS} jobs)..."
 log "Installing gcc Stage 1..."
 "${MAKE}" -C build-gcc-stage1 install-gcc install-target-libgcc
 
-# ── Build and install mlibc to sysroot ──────────────────────────────────────────
-log "Configuring mlibc..."
+# ── Build and install full mlibc to sysroot ──────────────────────────────────
+log "Configuring full mlibc..."
 mkdir -p build-mlibc
 (cd build-mlibc && \
     meson setup \
@@ -357,7 +375,7 @@ mkdir -p build-mlibc
         -Dbsd_option=disabled \
         "${MLIBC_SRC}")
 
-log "Building and installing mlibc to sysroot..."
+log "Building and installing mlibc binaries to sysroot..."
 ninja -C build-mlibc install
 
 # ── Build GCC Stage 2 (Hosted) ────────────────────────────────────────────────
@@ -389,6 +407,7 @@ log "Installing gcc Stage 2..."
 log "Cleaning up build directories..."
 rm -rf \
     build-binutils "binutils-${BINUTILS_VERSION}" \
+    build-mlibc-headers \
     build-gcc-stage1 build-gcc-stage2 "gcc-${GCC_VERSION}" \
     build-mlibc
 if [[ "${CLEANUP_MLIBC}" == "true" ]]; then
