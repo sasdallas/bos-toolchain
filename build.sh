@@ -277,8 +277,6 @@ cat << 'EOF' > "gcc-${GCC_VERSION}/gcc/config/boredos.h"
 #define LINK_SPEC "%{shared:-shared} \
   %{!shared: %{!static: %{rdynamic:-export-dynamic} \
   -dynamic-linker " DYNAMIC_LINKER "} %{static:-static}}"
-
-#define NO_IMPLICIT_EXTERN_C 1
 EOF
 
 log "Configuring gcc Stage 1 (Freestanding)..."
