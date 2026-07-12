@@ -24,15 +24,8 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 need() { command -v "$1" &>/dev/null || die "Required tool '$1' not found"; }
 need curl; need tar
 
-# Resolve the download URL for the latest release asset
-log "Resolving latest toolchain release from ${REPO}..."
-API_URL="https://api.github.com/repos/${REPO}/releases/latest"
-DOWNLOAD_URL=$(curl -fsSL "${API_URL}" \
-    | grep -o "\"browser_download_url\": *\"[^\"]*${ASSET_NAME}\"" \
-    | head -1 \
-    | cut -d'"' -f4)
-
-[[ -z "${DOWNLOAD_URL}" ]] && die "Could not find ${ASSET_NAME} in latest release of ${REPO}"
+log "Downloading latest toolchain release from ${REPO}..."
+DOWNLOAD_URL="https://github.com/${REPO}/releases/download/latest/${ASSET_NAME}"
 
 log "Installing toolchain to ${PREFIX}..."
 log "Streaming from: ${DOWNLOAD_URL}"
