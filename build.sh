@@ -128,7 +128,7 @@ def replace_or_die(filename, search, replace):
 # patch config.sub
 replace_or_die("gcc-14.2.0/config.sub", "| fiwix* )", "| fiwix* | boredos* )")
 
-# patch gcc/config.gcc (common parts & thread feature configuration cascading)
+# patch gcc/config.gcc
 with open("gcc-14.2.0/gcc/config.gcc", "r") as f:
     content = f.read()
 
@@ -183,6 +183,23 @@ with open("gcc-14.2.0/gcc/config.gcc", "w") as f:
 replace_or_die("gcc-14.2.0/libstdc++-v3/configure.host",
                "\ncase \"${host_os}\" in",
                "\ncase \"${host_os}\" in\n  boredos*)\n    os_include_dir=\"os/generic\"\n    ;;")
+
+# Neutralize cross-compilation safety valve exit block in libstdc++ configure script
+with open("gcc-14.2.0/libstdc++-v3/configure", "r") as f:
+    lines = f.readlines()
+
+patched_cross_check = False
+for i, line in enumerate(lines):
+    if "No support for this host/target combination." in line:
+        lines[i] = '      echo "Bypassing unsupported libstdc++ target validation block for boredos"\n'
+        patched_cross_check = True
+
+if not patched_cross_check:
+    print("ERROR: Target sanity check line not found in libstdc++-v3/configure", file=sys.stderr)
+    sys.exit(1)
+
+with open("gcc-14.2.0/libstdc++-v3/configure", "w") as f:
+    f.writelines(lines)
 
 # patch libgcc/config.host
 with open("gcc-14.2.0/libgcc/config.host", "r") as f:
