@@ -143,28 +143,24 @@ log "Installing binutils..."
 "${MAKE}" -C build-binutils install MAKEINFO=true
 
 # ── Install mlibc Headers (Breaks Bootstrap Cycle) ───────────────────────────
-log "Installing mlibc headers to sysroot..."
-mkdir -p build-mlibc-headers
-(cd build-mlibc-headers && \
-    meson setup \
-        --cross-file "${CROSS_FILE}" \
-        --prefix="${PREFIX}/${TARGET_NAME}" \
-        --libdir=lib \
-        -Ddefault_library=static \
-        -Dheaders_only=true \
-        -Dposix_option=enabled \
-        -Dlinux_option=disabled \
-        -Dglibc_option=disabled \
-        -Dbsd_option=disabled \
-        "${MLIBC_SRC}")
+#log "Installing mlibc headers to sysroot..."
+#mkdir -p build-mlibc-headers
+#(cd build-mlibc-headers && \
+#    meson setup \
+#        --cross-file "${CROSS_FILE}" \
+#        --prefix="${PREFIX}/${TARGET_NAME}" \
+#        --libdir=lib \
+#        -Ddefault_library=static \
+#        -Dheaders_only=true \
+#        "${MLIBC_SRC}")
 
-log "Running header installation..."
-ninja -C build-mlibc-headers install
+#log "Running header installation..."
+#ninja -C build-mlibc-headers install
 
-mkdir -p "${PREFIX}/${TARGET_NAME}/usr"
-if [[ ! -e "${PREFIX}/${TARGET_NAME}/usr/include" ]]; then
-    ln -s "../include" "${PREFIX}/${TARGET_NAME}/usr/include"
-fi
+#mkdir -p "${PREFIX}/${TARGET_NAME}/usr"
+#if [[ ! -e "${PREFIX}/${TARGET_NAME}/usr/include" ]]; then
+#    ln -s "../include" "${PREFIX}/${TARGET_NAME}/usr/include"
+#fi
 
 # ── Build GCC Stage 1 (Freestanding / Bootstrap) ─────────────────────────────────
 log "Downloading gcc ${GCC_VERSION}..."
