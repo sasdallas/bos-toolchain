@@ -182,6 +182,24 @@ with open("gcc-14.2.0/gcc/config.gcc", "w") as f:
 replace_or_die("gcc-14.2.0/libstdc++-v3/configure.host",
                "\ncase \"${host_os}\" in",
                "\ncase \"${host_os}\" in\n  boredos*)\n    os_include_dir=\"os/generic\"\n    ;;")
+
+# patch libgcc/configure.tgt
+with open("gcc-14.2.0/libgcc/configure.tgt", "r") as f:
+    content = f.read()
+
+# Insert boredos case before the catch-all *)
+catchall = "\n*)\n\t;;\nesac"
+if catchall not in content:
+    print("ERROR: Could not find catch-all *) in libgcc/configure.tgt", file=sys.stderr)
+    sys.exit(1)
+boredos_libgcc = """
+x86_64-*-boredos*)
+\textra_parts="$extra_parts crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o"
+\ttmake_file="$tmake_file i386/t-crtstuff t-crtstuff-pic t-libgcc-pic"
+\t;;"""
+content = content.replace(catchall, boredos_libgcc + catchall)
+with open("gcc-14.2.0/libgcc/configure.tgt", "w") as f:
+    f.write(content)
 '
 }
 
