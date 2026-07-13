@@ -10,8 +10,13 @@ GCC_VERSION="12.2.0"
 TARGET_BUILD="x86_64-boredos"
 TARGET_NAME="x86_64-boredos"
 
-PREFIX="${1:-/opt/boredos-toolchain}"
-JOBS=1
+SYSROOT="${1:-/opt/boredos-toolchain}"
+PREFIX="/usr/"
+JOBS=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
+
+AUTOCONF="${SYSROOT}${PREFIX}/bin/autoconf"
+AUTOMAKE="${SYSROOT}${PREFIX}/bin/automake"
+AUTOM4TE="${SYSROOT}${PREFIX}/bin/autom4te"
 
 BINUTILS_TAR="binutils-${BINUTILS_VERSION}.tar.xz"
 GCC_TAR="gcc-${GCC_VERSION}.tar.xz"
@@ -80,6 +85,11 @@ fi
 patch_binutils() {
     log "Patching binutils..."
     patch -d "binutils-${BINUTILS_VERSION}" -p1 < "${SCRIPT_DIR}/patches/binutils-${BINUTILS_VERSION}.patch"
+    log "Regenerating ld Makefile..."
+    pushd "binutils-${BINUTILS_VERSION}/ld"
+    echo ${AUTOMAKE}
+    /opt/boredos-toolchain/usr/bin/automake
+    popd
 }
 
 patch_gcc() {
@@ -87,15 +97,18 @@ patch_gcc() {
     patch -d "gcc-${GCC_VERSION}" -p1 < "${SCRIPT_DIR}/patches/gcc-${GCC_VERSION}.patch"
     patch -d "gcc-${GCC_VERSION}" -p1 < "${SCRIPT_DIR}/patches/gcc-16.patch"
     log "Regenerating libstdc++ configure script..."
-    (cd "gcc-${GCC_VERSION}/libstdc++-v3" && autoconf)
+    (cd "gcc-${GCC_VERSION}/libstdc++-v3" && ${AUTOCONF})
 }
 
 log "Building ${TARGET_NAME} Stage 2 cross-toolchain → ${PREFIX}"
 log "  binutils ${BINUTILS_VERSION}, gcc ${GCC_VERSION}"
 log "  Using ${JOBS} parallel jobs"
 
-mkdir -p "${PREFIX}"
-export PATH="${PREFIX}/bin:${PATH}"
+mkdir -p "${SYSROOT}${PREFIX}"
+mkdir -p "${SYSROOT}${PREFIX}/bin/"
+mkdir -p "${SYSROOT}${PREFIX}/include/"
+mkdir -p "${SYSROOT}${PREFIX}/lib/"
+export PATH="${SYSROOT}${PREFIX}/bin/:${PATH}"
 
 # ── Detect host GMP/MPFR/MPC ────────────────────────────────────────────────
 EXTRA_CONFIGURE=""
@@ -112,9 +125,35 @@ elif [[ -d /usr/local/lib ]]; then
     EXTRA_CONFIGURE="--with-gmp=/usr/local --with-mpfr=/usr/local --with-mpc=/usr/local"
 fi
 
+# First build the pre-requisite versions of autoconf and automake
+curl -fsSL --retry 3 "https://ftpmirror.gnu.org/gnu/autoconf/autoconf-2.69.tar.gz" -o "autoconf-2.69.tar.gz"
+tar -xf autoconf-2.69.tar.gz
+rm autoconf-2.69.tar.gz
+
+pushd autoconf-2.69
+./configure --prefix=$PREFIX
+make -j${JOBS}
+make DESTDIR=$SYSROOT install
+popd
+
+curl -fsSL --retry 3 "https://ftpmirror.gnu.org/gnu/automake/automake-1.15.1.tar.gz" -o "automake-1.15.1.tar.gz"
+tar -xf automake-1.15.1.tar.gz
+rm automake-1.15.1.tar.gz
+
+pushd automake-1.15.1
+./configure --prefix=$PREFIX
+make -j${JOBS}
+make DESTDIR=$SYSROOT install
+popd
+
+which autoconf
+which automake
+
 # ── Build binutils ────────────────────────────────────────────────────────────
 log "Downloading binutils ${BINUTILS_VERSION}..."
 curl -fsSL --retry 3 "${BINUTILS_URL}" -o "${BINUTILS_TAR}"
+
+rm -rf binutils-${BINUTILS_VERSION} || true
 
 log "Extracting binutils..."
 tar -xf "${BINUTILS_TAR}"
@@ -128,7 +167,7 @@ mkdir -p build-binutils
     "../binutils-${BINUTILS_VERSION}/configure" \
         --target="${TARGET_BUILD}" \
         --prefix="${PREFIX}" \
-        --with-sysroot="${PREFIX}/${TARGET_NAME}" \
+        --with-sysroot="${SYSROOT}" \
         --disable-nls \
         --disable-werror \
         --disable-multilib \
@@ -140,27 +179,25 @@ log "Building binutils (${JOBS} jobs)..."
 "${MAKE}" -C build-binutils -j"${JOBS}" MAKEINFO=true
 
 log "Installing binutils..."
-"${MAKE}" -C build-binutils install MAKEINFO=true
+"${MAKE}" -C build-binutils DESTDIR=${SYSROOT} install MAKEINFO=true
 
 # ── Install mlibc Headers (Breaks Bootstrap Cycle) ───────────────────────────
-#log "Installing mlibc headers to sysroot..."
-#mkdir -p build-mlibc-headers
-#(cd build-mlibc-headers && \
-#    meson setup \
-#        --cross-file "${CROSS_FILE}" \
-#        --prefix="${PREFIX}/${TARGET_NAME}" \
-#        --libdir=lib \
-#        -Ddefault_library=static \
-#        -Dheaders_only=true \
-#        "${MLIBC_SRC}")
+log "Installing mlibc headers to sysroot..."
+mkdir -p build-mlibc-headers
+(cd build-mlibc-headers && \
+   meson setup \
+       --cross-file "${CROSS_FILE}" \
+       --prefix="${PREFIX}" \
+       -Ddefault_library=static \
+       -Dheaders_only=true \
+       -Dposix_option=enabled \
+       -Dlinux_option=disabled \
+       -Dglibc_option=disabled \
+       -Dbsd_option=disabled \
+       "${MLIBC_SRC}")
 
-#log "Running header installation..."
-#ninja -C build-mlibc-headers install
-
-#mkdir -p "${PREFIX}/${TARGET_NAME}/usr"
-#if [[ ! -e "${PREFIX}/${TARGET_NAME}/usr/include" ]]; then
-#    ln -s "../include" "${PREFIX}/${TARGET_NAME}/usr/include"
-#fi
+log "Running header installation..."
+DESTDIR="${SYSROOT}" ninja -C build-mlibc-headers install
 
 # ── Build GCC Stage 1 (Freestanding / Bootstrap) ─────────────────────────────────
 log "Downloading gcc ${GCC_VERSION}..."
@@ -173,40 +210,30 @@ rm -f "${GCC_TAR}"
 patch_gcc
 
 log "Configuring gcc Stage 1 (Freestanding)..."
-mkdir -p build-gcc-stage1
-(cd build-gcc-stage1 && \
+mkdir -p build-gcc
+(cd build-gcc && \
     "../gcc-${GCC_VERSION}/configure" \
         --target="${TARGET_BUILD}" \
         --prefix="${PREFIX}" \
-        --with-sysroot="${PREFIX}/${TARGET_NAME}" \
+        --with-sysroot="${SYSROOT}" \
         --enable-languages=c,c++ \
-        --without-headers \
-        --disable-nls \
         --disable-multilib \
-        --disable-bootstrap \
-        --disable-fixincludes \
-        --disable-libssp \
-        --disable-libquadmath \
-        --disable-libgomp \
-        --disable-libatomic \
-        --disable-libstdcxx \
+        --disable-werror \
         --with-system-zlib \
         ${EXTRA_CONFIGURE})
 
 log "Building gcc Stage 1 (${JOBS} jobs)..."
-"${MAKE}" -C build-gcc-stage1 -j"${JOBS}" all-gcc all-target-libgcc MAKEINFO=true
+"${MAKE}" -C build-gcc -j"${JOBS}" all-gcc all-target-libgcc MAKEINFO=true
 
 log "Installing gcc Stage 1..."
-"${MAKE}" -C build-gcc-stage1 install-gcc install-target-libgcc MAKEINFO=true
+"${MAKE}" -C build-gcc DESTDIR=${SYSROOT} install-strip-gcc install-target-libgcc MAKEINFO=true
 
-# ── Build and install full mlibc to sysroot ──────────────────────────────────
 log "Configuring full mlibc..."
 mkdir -p build-mlibc
 (cd build-mlibc && \
     meson setup \
         --cross-file "${CROSS_FILE}" \
-        --prefix="${PREFIX}/${TARGET_NAME}" \
-        --libdir=lib \
+        --prefix="${PREFIX}" \
         -Ddefault_library=static \
         -Dheaders_only=false \
         -Dposix_option=enabled \
@@ -216,40 +243,20 @@ mkdir -p build-mlibc
         "${MLIBC_SRC}")
 
 log "Building and installing mlibc binaries to sysroot..."
-ninja -C build-mlibc install
+DESTDIR="${SYSROOT}" ninja -C build-mlibc install
 
 # ── Build GCC Stage 2 (Hosted) ────────────────────────────────────────────────
-log "Configuring gcc Stage 2 (Hosted)..."
-mkdir -p build-gcc-stage2
-(cd build-gcc-stage2 && \
-    "../gcc-${GCC_VERSION}/configure" \
-        --target="${TARGET_BUILD}" \
-        --prefix="${PREFIX}" \
-        --with-sysroot="${PREFIX}/${TARGET_NAME}" \
-        --enable-languages=c,c++ \
-        --enable-shared \
-        --disable-nls \
-        --disable-multilib \
-        --disable-bootstrap \
-        --disable-libssp \
-        --disable-libquadmath \
-        --disable-libgomp \
-        --disable-libatomic \
-        --enable-threads=posix \
-        --with-system-zlib \
-        ${EXTRA_CONFIGURE})
-
 log "Building gcc Stage 2 (Hosted, ${JOBS} jobs)..."
-"${MAKE}" -C build-gcc-stage2 -j"${JOBS}" MAKEINFO=true
+"${MAKE}" -C build-gcc -j"${JOBS}" all-target-libstdc++-v3 MAKEINFO=true
 
 log "Installing gcc Stage 2..."
-"${MAKE}" -C build-gcc-stage2 install MAKEINFO=true
+"${MAKE}" -C build-gcc -j"${JOBS}" install-target-libstdc++-v3 MAKEINFO=true
 
 log "Cleaning up build directories..."
 rm -rf \
     build-binutils "binutils-${BINUTILS_VERSION}" \
     build-mlibc-headers \
-    build-gcc-stage1 build-gcc-stage2 "gcc-${GCC_VERSION}" \
+    build-gcc "gcc-${GCC_VERSION}" \
     build-mlibc
 if [[ "${CLEANUP_MLIBC}" == "true" ]]; then
     log "Removing cloned mlibc..."

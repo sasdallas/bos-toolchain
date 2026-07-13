@@ -1,44 +1,113 @@
---- a/config.sub
-+++ b/config.sub
+diff -Naur old_extract/binutils-2.42/bfd/config.bfd new_workspace/binutils-2.42/bfd/config.bfd
+--- a/bfd/config.bfd	2024-01-28 18:00:00.000000000 -0600
++++ b/bfd/config.bfd	2026-07-13 09:51:59.913818659 -0500
+@@ -591,6 +591,18 @@
+     targ_defvec=i386_elf32_vec
+     targ_selvecs="iamcu_elf32_vec i386_coff_vec"
+     ;;
++  i[3-7]86-*-boredos*)
++    targ_defvec=i386_elf32_vec
++    targ_selvecs=
++    targ64_selvecs=x86_64_elf64_vec
++    ;;
++#ifdef BFD64
++  x86_64-*-boredos*)
++    targ_defvec=x86_64_elf64_vec
++    targ_selvecs=i386_elf32_vec
++    want64=true
++    ;;
++#endif
+   i[3-7]86-*-solaris2*)
+     targ_defvec=i386_elf32_sol2_vec
+     targ_selvecs="iamcu_elf32_vec i386_coff_vec i386_pei_vec"
+diff -Naur old_extract/binutils-2.42/config.sub new_workspace/binutils-2.42/config.sub
+--- a/config.sub	2024-01-28 18:00:00.000000000 -0600
++++ b/config.sub	2026-07-13 10:08:36.210517309 -0500
 @@ -1766,7 +1766,7 @@
  	     | onefs* | tirtos* | phoenix* | fuchsia* | redox* | bme* \
  	     | midnightbsd* | amdhsa* | unleashed* | emscripten* | wasi* \
  	     | nsk* | powerunix* | genode* | zvmoe* | qnx* | emx* | zephyr* \
 -	     | fiwix* | mlibc* | cos* | mbr* )
-+	     | fiwix* | mlibc* | boredos* | cos* | mbr* )
++	     | fiwix* | mlibc* | cos* | mbr* | boredos*)
  		;;
  	# This one is extra strict with allowed versions
  	sco3.2v2 | sco3.2v[4-9]* | sco5v6*)
---- a/bfd/config.bfd
-+++ b/bfd/config.bfd
-@@ -681,7 +681,7 @@
-     targ_selvecs="i386_elf32_vec iamcu_elf32_vec"
-     want64=true
-     ;;
--  x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia | x86_64-*-genode*)
-+  x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia | x86_64-*-genode* | x86_64-*-boredos*)
-     targ_defvec=x86_64_elf64_vec
-     targ_selvecs="i386_elf32_vec iamcu_elf32_vec x86_64_elf32_vec"
-     case "${targ}" in
---- a/gas/configure.tgt
-+++ b/gas/configure.tgt
-@@ -228,7 +228,7 @@
+diff -Naur old_extract/binutils-2.42/gas/configure.tgt new_workspace/binutils-2.42/gas/configure.tgt
+--- a/gas/configure.tgt	2024-01-28 18:00:00.000000000 -0600
++++ b/gas/configure.tgt	2026-07-13 09:51:59.998104149 -0500
+@@ -227,6 +227,7 @@
+ 
    i386-*-beospe*)			fmt=coff em=pe ;;
    i386-*-beos*)				fmt=elf ;;
++  i386-*-boredos*)			fmt=elf ;;
    i386-*-elfiamcu)			fmt=elf arch=iamcu ;;
--  i386-*-elf*)				fmt=elf ;;
-+  i386-*-elf* | i386-*-boredos*)				fmt=elf ;;
+   i386-*-elf*)				fmt=elf ;;
    i386-*-fuchsia*)			fmt=elf ;;
-   i386-*-haiku*)			fmt=elf em=haiku ;;
-   i386-*-genode*)			fmt=elf ;;
---- a/ld/configure.tgt
-+++ b/ld/configure.tgt
-@@ -1036,7 +1036,7 @@
- 			tdir_elf_i386=`echo ${targ_alias} | \
- 			    sed -e 's/x86_64/i386/' -e 's/aout//'`
+diff -Naur old_extract/binutils-2.42/ld/configure.tgt new_workspace/binutils-2.42/ld/configure.tgt
+--- a/ld/configure.tgt	2024-01-28 18:00:00.000000000 -0600
++++ b/ld/configure.tgt	2026-07-13 09:52:00.432661831 -0500
+@@ -351,6 +351,10 @@
  			;;
--x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia* | x86_64-*-genode*)
-+x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia* | x86_64-*-genode* | x86_64-*-boredos*)
+ hppa*-*-openbsd*)	targ_emul=hppaobsd
+ 			;;
++i[3-7]86-*-boredos*)	targ_emul=elf_i386_boredos
++	targ_extra_emuls=elf_i386
++	targ64_extra_emuls="elf_x86_64_boredos elf_x86_64"
++	;;
+ i[3-7]86-*-nto-qnx*)	targ_emul=i386nto
+ 			;;
+ i[3-7]86-*-go32)	targ_emul=i386go32
+@@ -1028,6 +1032,12 @@
+ 			targ_extra_libpath=$targ_extra_emuls
+ 			tdir_elf_i386=`echo ${targ_alias} | sed -e 's/x86_64/i386/'`
+ 			;;
++x86_64-*-boredos*)
++			targ_emul=elf_x86_64_boredos
++			targ_extra_emuls="elf_i386_boredos elf_x86_64 elf_i386"
++			targ_extra_libpath=$targ_extra_emuls
++			tdir_elf_i386='echo ${targ_alias} | sed -e 's/x86_64/i386/'`
++			;;
+ x86_64-*-netbsd* | x86_64-*-openbsd*)
  			targ_emul=elf_x86_64
- 			targ_extra_emuls="elf_i386 elf_iamcu elf32_x86_64"
- 			targ_extra_libpath="elf_i386 elf_iamcu elf32_x86_64"
+ 			targ_extra_emuls="elf_i386 elf_iamcu"
+diff -Naur old_extract/binutils-2.42/ld/emulparams/elf_i386_boredos.sh new_workspace/binutils-2.42/ld/emulparams/elf_i386_boredos.sh
+--- a/ld/emulparams/elf_i386_boredos.sh	1969-12-31 18:00:00.000000000 -0600
++++ b/ld/emulparams/elf_i386_boredos.sh	2026-07-13 09:52:00.441312285 -0500
+@@ -0,0 +1 @@
++source_sh ${srcdir}/emulparams/elf_i386.sh
+diff -Naur old_extract/binutils-2.42/ld/emulparams/elf_x86_64_boredos.sh new_workspace/binutils-2.42/ld/emulparams/elf_x86_64_boredos.sh
+--- a/ld/emulparams/elf_x86_64_boredos.sh	1969-12-31 18:00:00.000000000 -0600
++++ b/ld/emulparams/elf_x86_64_boredos.sh	2026-07-13 10:08:59.120127260 -0500
+@@ -0,0 +1 @@
++source_sh ${srcdir}/emulparams/elf_x86_64.sh
+diff -Naur old_extract/binutils-2.42/ld/Makefile.am new_workspace/binutils-2.42/ld/Makefile.am
+--- a/ld/Makefile.am	2024-01-28 18:00:00.000000000 -0600
++++ b/ld/Makefile.am	2026-07-13 09:52:00.432162002 -0500
+@@ -278,6 +278,7 @@
+ 	eelf32z80.c \
+ 	eelf_i386.c \
+ 	eelf_i386_be.c \
++	eelf_i386_boredos.c \
+ 	eelf_i386_fbsd.c \
+ 	eelf_i386_haiku.c \
+ 	eelf_i386_ldso.c \
+@@ -461,6 +462,7 @@
+ 	eelf64tilegx_be.c \
+ 	eelf_mipsel_haiku.c \
+ 	eelf_x86_64.c \
++	eelf_x86_64_boredos.c \
+ 	eelf_x86_64_cloudabi.c \
+ 	eelf_x86_64_fbsd.c \
+ 	eelf_x86_64_haiku.c \
+diff -Naur old_extract/binutils-2.42/ld/configure.ac new_workspace/binutils-2.42/ld/configure.ac
+--- a/ld/configure.ac	2024-01-28 18:00:00.000000000 -0600
++++ b/ld/configure.ac	2026-07-13 10:36:07.506642090 -0500
+@@ -17,6 +17,8 @@
+ dnl <http://www.gnu.org/licenses/>.
+ dnl
+ 
++m4_define([_GCC_AUTOCONF_VERSION_CHECK], [])
++
+ m4_include([../bfd/version.m4])
+ AC_INIT([ld], BFD_VERSION)
+ AC_CONFIG_SRCDIR(ldmain.c)
