@@ -88,7 +88,7 @@ patch_binutils() {
     log "Regenerating ld Makefile..."
     pushd "binutils-${BINUTILS_VERSION}/ld"
     echo ${AUTOMAKE}
-    /opt/boredos-toolchain/usr/bin/automake
+    ${AUTOMAKE}
     popd
 }
 
